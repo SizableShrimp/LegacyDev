@@ -2,11 +2,13 @@ buildscript {
     repositories {
         mavenCentral()
     }
+    dependencies {
+        classpath 'org.eclipse.jgit:org.eclipse.jgit:5.10.0.202012080955-r'
+    }
 }
 
 plugins {
   id 'net.minecrell.licenser' version '0.3'
-  id 'org.ajoberstar.grgit' version '4.0.0'
   id 'com.github.johnrengelman.shadow' version '5.2.0'
 }
 
@@ -23,24 +25,12 @@ repositories {
 
 ext {
     TAG = '0.0'
-}
-def gitVersion = {
-    def raw = grgit.describe(longDescr: true, tags:true)
-    def desc = (raw == null ? '0.0-0-unknown' : grgit.describe(longDescr: true, tags:true)).split('-') as List
-    def hash = desc.remove(desc.size() - 1)
-    def offset = desc.remove(desc.size() - 1)
-    TAG = desc.join('-')
-    def branch = grgit.branch.current().name
-    if (branch in ['master', 'HEAD'])
-        branch = null
-    if (branch != null && branch.endsWith('.x') && TAG.equals(branch.substring(0, branch.length() - 2)))
-        branch = null
-    return "${TAG}.${offset}${t -> if (branch != null) t << '-' + branch}".toString()
+    GIT_INFO = gitInfo(rootProject.file('.'))
 }
 
 group = 'net.minecraftforge'
 archivesBaseName = 'legacydev'
-version = gitVersion()
+version = "${project.ext.GIT_INFO.tag}.${project.ext.GIT_INFO.offset}"
 targetCompatibility = sourceCompatibility = compileJava.sourceCompatibility = compileJava.targetCompatibility = '1.8'
 
 license {
@@ -56,11 +46,11 @@ ext {
             'Specification-Vendor': 'Forge Development LLC',
             'Specification-Version': TAG,
             'Implementation-Title': project.name,
-            'Implementation-Version': "${version}+${System.getenv("BUILD_NUMBER")?:0}+${grgit.head().abbreviatedId}",
+            'Implementation-Version': "${version}+${System.getenv("BUILD_NUMBER")?:0}+${GIT_INFO.abbreviatedId}",
             'Implementation-Vendor': 'Forge Development LLC',
             'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
-            'Git-Commit': grgit.head().abbreviatedId,
-            'Git-Branch': grgit.branch.current().getName() 
+            'Git-Commit': GIT_INFO.abbreviatedId,
+            'Git-Branch': GIT_INFO.branch
         ] as LinkedHashMap, 'net/minecraftforge/legacydev/')
     }
 }
@@ -133,15 +123,59 @@ publishing {
     }
     repositories {
         maven {
-            if (project.hasProperty('forgeMavenPassword')) {
-                credentials {
-                    username project.properties.forgeMavenUser
-                    password project.properties.forgeMavenPassword
+            if (System.env.MAVEN_USER) {
+                url "https://maven.minecraftforge.net/releases/"
+                authentication {
+                    basic(BasicAuthentication)
                 }
-                url 'https://files.minecraftforge.net/maven/manage/upload'
+                credentials {
+                    username = System.env.MAVEN_USER ?: 'not'
+                    password = System.env.MAVEN_PASSWORD ?: 'set'
+                }
             } else {
                 url 'file://' + rootProject.file('repo').getAbsolutePath()
             }
         }
     }
+}
+
+def gitInfo(dir) {
+    String.metaClass.rsplit = { String del, int limit = -1 ->
+        def lst = new ArrayList()
+        def x = 0, idx
+        def tmp = delegate
+        while ((idx = tmp.lastIndexOf(del)) != -1 && (limit == -1 || x++ < limit)) {
+            lst.add(0, tmp.substring(idx + del.length(), tmp.length()))
+            tmp = tmp.substring(0, idx)
+        }
+        lst.add(0, tmp)
+        return lst
+    }
+
+    def git = null
+    try {
+        git = org.eclipse.jgit.api.Git.open(dir)
+    } catch (org.eclipse.jgit.errors.RepositoryNotFoundException e) {
+        return [
+                tag: '0.0',
+                offset: '0',
+                hash: '00000000',
+                branch: 'master',
+                commit: '0000000000000000000000',
+                abbreviatedId: '00000000'
+        ]
+    }
+    def desc = git.describe().setLong(true).setTags(true).call().rsplit('-', 2)
+    def head = git.repository.exactRef('HEAD')
+    def longBranch = head.symbolic ? head?.target?.name : null // matches Repository.getFullBranch() but returning null when on a detached HEAD
+
+    def ret = [:]
+    ret.tag = desc[0]
+    ret.offset = desc[1]
+    ret.hash = desc[2]
+    ret.branch = longBranch != null ? org.eclipse.jgit.lib.Repository.shortenRefName(longBranch) : null
+    ret.commit = org.eclipse.jgit.lib.ObjectId.toString(head.objectId)
+    ret.abbreviatedId = head.objectId.abbreviate(8).name()
+
+    return ret
 }

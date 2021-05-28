@@ -18,19 +18,31 @@
  */
 package net.minecraftforge.legacydev;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.logging.LogManager;
-import java.util.logging.Logger;
 import joptsimple.NonOptionArgumentSpec;
 import joptsimple.OptionParser;
 import joptsimple.OptionSet;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.net.URL;
+import java.net.URLClassLoader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.LogManager;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class Main {
     static Logger LOGGER = setupLogger();
@@ -80,6 +92,7 @@ public class Main {
         b.append(']');
         LOGGER.info("Running with arguments: " + b.toString());
 
+        condenseModClasses();
 
         Class<?> cls = Class.forName(mainClass);
         Method main = cls.getDeclaredMethod("main", String[].class);
@@ -133,6 +146,56 @@ public class Main {
         lst.addAll(extras);
 
         return lst.toArray(new String[lst.size()]);
+    }
+
+    protected void condenseModClasses() {
+        try {
+            String modClasses = getenv("MOD_CLASSES");
+            List<Path> dirs = Arrays.stream(modClasses.split(";")).map(Paths::get).collect(Collectors.toList());
+            if (dirs.size() <= 1)
+                return;
+            URLClassLoader classloader = (URLClassLoader) getClass().getClassLoader();
+            Object ucp = getDeclaredField(classloader, "ucp");
+            List<URL> urls = (List<URL>) getDeclaredField(ucp, "path");
+            Path base = getBasePath(dirs);
+            for (Path dir : dirs) {
+                if (dir == base)
+                    continue;
+                urls.remove(dir.toUri().toURL());
+                try (Stream<Path> walk = Files.walk(dir)) {
+                    for (Path source : walk.sorted().collect(Collectors.toList())) {
+                        if (source == dir)
+                            continue;
+                        if (Files.isDirectory(source)) {
+                            base.resolve(dir.relativize(source)).toFile().mkdirs();
+                        } else {
+                            Files.copy(source, base.resolve(dir.relativize(source)), StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.INFO, "Error when condensing mod output directories", e);
+            e.printStackTrace();
+        }
+    }
+
+    protected Object getDeclaredField(Object in, String fieldName) throws NoSuchFieldException, IllegalAccessException {
+        Field field = in.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.get(in);
+    }
+
+    protected Path getBasePath(List<Path> dirs) {
+        for (int i = 0; i < dirs.size(); i++) {
+            Path dir = dirs.get(i);
+            if (dir.getFileName().toString().equals("classes")) {
+                return dir;
+            }
+            if (i == dirs.size() - 1)
+                return dir;
+        }
+        return null;
     }
 
     protected String getenv(String name) {
