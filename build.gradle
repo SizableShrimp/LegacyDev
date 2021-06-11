@@ -10,6 +10,10 @@ plugins {
 
 repositories {
     mavenCentral()
+    maven {
+        name 'mojang'
+        url 'https://libraries.minecraft.net/'
+    }
 }
 
 ext {
@@ -43,8 +47,16 @@ ext {
     }
 }
 
+configurations {
+    shade
+}
+
 dependencies {
-    implementation 'net.sf.jopt-simple:jopt-simple:5.0.4'
+    shade 'net.sf.jopt-simple:jopt-simple:5.0.4'
+    implementation('net.minecraft:launchwrapper:1.12') {
+        exclude group: 'org.ow2.asm'
+    }
+    implementation 'com.google.guava:guava:21.0'
 }
 
 compileJava {
@@ -57,14 +69,9 @@ task sourcesJar(type: Jar, dependsOn: classes) {
     manifest.from(MANIFEST)
 }
 
-task relocateShadowJar(type: com.github.jengelman.gradle.plugins.shadow.tasks.ConfigureShadowRelocation) {
-    target = tasks.shadowJar
-    prefix = "${project.group}.${project.name}.reloc"
-}
-
 shadowJar {
-    dependsOn(relocateShadowJar)
     classifier 'fatjar'
+    configurations = [ project.configurations.shade ]
     manifest.from(MANIFEST)
 }
 
