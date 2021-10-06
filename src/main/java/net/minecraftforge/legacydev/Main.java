@@ -156,7 +156,12 @@ public class Main {
     protected void condenseModClasses() {
         try {
             String modClasses = getenv("MOD_CLASSES");
-            List<Path> dirs = Arrays.stream(modClasses.split(";")).map(Paths::get).collect(Collectors.toList());
+            List<Path> dirs = Arrays.stream(modClasses.split(";"))
+                    .map(s -> {
+                        int idx = s.indexOf("%%");
+                        return idx == -1 ? s : s.substring(idx + 2);
+                    }).filter(s -> !s.isEmpty())
+                    .map(Paths::get).collect(Collectors.toList());
             if (dirs.size() <= 1)
                 return;
             URLClassLoader classloader = (URLClassLoader) getClass().getClassLoader();
